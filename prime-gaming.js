@@ -93,10 +93,36 @@ try {
         await emailInput.fill(email);
         await loginRoot.locator('input[type="submit"]').first().click();
       }
-      const passwordInput = loginRoot.locator(passwordSel).first();
-      await passwordInput.waitFor({ state: 'visible', timeout: 15000 });
-      await passwordInput.fill(password);
-      await loginRoot.locator('input[type="submit"]').first().click();
+      // After email submit, Amazon may show: password field, "security code sent to email", or "account details review".
+      // Always use loginPage (not loginRoot frame) for the next step to avoid "Can't query n-th element" after navigation.
+      const passwordInput = loginPage.locator(passwordSel).first();
+      try {
+        await passwordInput.waitFor({ state: 'visible', timeout: 15000 });
+      } catch {
+        let isVerify = false;
+        let isReview = false;
+        try {
+          const url = loginPage.url();
+          isVerify = /\/ap\/(cvf|mfa|vf)/i.test(url) || (await loginPage.locator('text=/security code|sent to your email|new device|verify/i').count()) > 0;
+          isReview = (await loginPage.locator('text=/account details review|review your account/i').count()) > 0
+            || (await loginPage.locator('input[type="submit"][value="Yes"], button:has-text("Continue"), button:has-text("Yes")').count()) > 0;
+        } catch (_) { /* page may have navigated */ }
+        if (isVerify) {
+          console.log('Security code or verification step detected. Please enter the code in the browser, then the script will continue.');
+          await page.waitForURL(`${BASE_URL}/claims/home?signedIn=true`, { timeout: cfg.login_timeout });
+        } else if (isReview) {
+          console.log('Account review step detected. Click "Yes" or "Continue" in the browser, then the script will continue.');
+          const reviewBtn = loginPage.locator('input[type="submit"][value="Yes"], button:has-text("Continue"), button:has-text("Yes")');
+          if (await reviewBtn.count() > 0) await reviewBtn.first().click().catch(() => {});
+          await page.waitForURL(`${BASE_URL}/claims/home?signedIn=true`, { timeout: cfg.login_timeout });
+        } else {
+          throw new Error('Expected password field or verification screen after email. Please complete login in the browser.');
+        }
+      }
+      if (await passwordInput.isVisible()) {
+        await passwordInput.fill(password);
+        await loginPage.locator('input[type="submit"]').first().click();
+      }
       loginPage.waitForURL('**/ap/signin**').then(async () => {
         const alertLoc = loginPage.locator('.a-alert-content');
         if ((await alertLoc.count()) === 0) return; // nothing to show – probably logged in and left the page

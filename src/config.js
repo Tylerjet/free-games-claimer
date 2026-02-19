@@ -35,6 +35,7 @@ export const cfg = {
   eg_otpkey: process.env.EG_OTPKEY,
   eg_parentalpin: process.env.EG_PARENTALPIN,
   eg_mobile: process.env.EG_MOBILE != '0', // claim mobile games
+  eg_fingerprint: process.env.EG_FINGERPRINT != '0', // realistic browser fingerprint; set to 0 to disable (may increase captcha risk)
   // auth prime-gaming
   pg_email: process.env.PG_EMAIL || process.env.EMAIL,
   pg_password: process.env.PG_PASSWORD || process.env.PASSWORD,

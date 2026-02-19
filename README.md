@@ -62,7 +62,7 @@ If you don't want to use Docker for quasi-headless mode, you could run inside a 
 ## Usage
 
 All scripts start an automated Chromium instance, either with the browser GUI shown or hidden (_headless mode_). By default, you won't see any browser open on your host system.
-Epic Games is an exception which will always show the browser since otherwise you would get a captcha challenge.
+Epic Games runs headless by default; fingerprinting and new headless mode are used to reduce captchas. If you still get a captcha, run with `SHOW=1` to solve it in the visible browser.
 
 - When running inside Docker, the browser will be shown only inside the container. You can open <http://localhost:6080> to interact with the browser running inside the container via noVNC (or use other VNC clients on port 5900).
 - When running the scripts outside of Docker, the browser will be hidden by default; you can use `SHOW=1 ...` to show the UI (see options below).
@@ -99,7 +99,7 @@ Available options/variables and their default values:
 | EG_PASSWORD    |              | Epic Games password for login. Overrides PASSWORD.                                                                           |
 | EG_OTPKEY      |              | Epic Games MFA OTP key.                                                                                                      |
 | EG_PARENTALPIN |              | Epic Games Parental Controls PIN.                                                                                            |
-| EG_FINGERPRINT   | 1        | Set to `0` to disable. When enabled (default), uses a realistic browser fingerprint |
+| EG_FINGERPRINT   | 1        | Set to `0` to disable. When enabled (default), uses a realistic browser fingerprint (helps reduce Epic captchas). |
 | PG_EMAIL       |              | Prime Gaming email for login. Overrides EMAIL.                                                                               |
 | PG_PASSWORD    |              | Prime Gaming password for login. Overrides PASSWORD.                                                                         |
 | PG_OTPKEY      |              | Prime Gaming MFA OTP key.                                                                                                    |
@@ -151,6 +151,8 @@ Beware that storing passwords and OTP keys as clear text may be a security risk.
 ### Epic Games Store
 
 Run `node epic-games` (locally or in Docker).
+
+To reduce captchas when running headless: fingerprinting is enabled by default (and forced when headless). Use a fixed `BROWSER_DIR` so the same profile is reused, and avoid IP changes or clearing cookies between runs. If you still get a captcha, run once with `SHOW=1` to solve it, then continue headless.
 
 ### Amazon Prime Gaming
 

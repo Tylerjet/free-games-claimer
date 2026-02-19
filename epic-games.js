@@ -10,7 +10,8 @@ import { getMobileGames } from './src/epic-games-mobile.js';
 
 let egFingerprint = null;
 let egFingerprintHeaders = null;
-if (cfg.eg_fingerprint) {
+// Use fingerprint when explicitly enabled or when headless (to reduce captcha risk without requiring SHOW=1)
+if (cfg.eg_fingerprint || cfg.headless) {
   const { FingerprintGenerator } = await import('fingerprint-generator');
   const { fingerprint, headers } = new FingerprintGenerator().getFingerprint({
     devices: ['desktop'],
@@ -40,10 +41,13 @@ const launchArgs = [
   '--ignore-gpu-blocklist', // required for OpenGL: Disabled -> Enabled & WebGL: Software only -> Hardware accelerated
   '--enable-unsafe-webgpu', // required for WebGPU: Disabled -> Hardware accelerated
 ];
+if (cfg.headless) {
+  launchArgs.push('--headless=new'); // Chrome 112+ new headless mode (closer to real Chrome, harder to detect)
+}
 
 // https://playwright.dev/docs/auth#multi-factor-authentication
 const contextOptions = {
-  headless: cfg.headless, // try headless when SHOW=0; set SHOW=1 if you get captcha
+  headless: cfg.headless,
   viewport: egFingerprint ? { width: egFingerprint.screen.width, height: egFingerprint.screen.height } : { width: cfg.width, height: cfg.height },
   locale: 'en-US', // ignore OS locale to be sure to have english text for locators
   recordVideo: cfg.record ? { dir: 'data/record/', size: { width: cfg.width, height: cfg.height } } : undefined, // will record a .webm video for each page navigated; without size, video would be scaled down to fit 800x800
