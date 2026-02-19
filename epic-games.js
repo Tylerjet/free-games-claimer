@@ -3,15 +3,31 @@ import { chromium } from 'patchright';
 import { authenticator } from 'otplib';
 import chalk from 'chalk';
 import path from 'path';
-import { existsSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { resolve, jsonDb, datetime, filenamify, prompt, confirm, notify, html_game_list, handleSIGINT } from './src/util.js';
 import { cfg } from './src/config.js';
 import { getMobileGames } from './src/epic-games-mobile.js';
+
+let egFingerprint = null;
+let egFingerprintHeaders = null;
+if (cfg.eg_fingerprint) {
+  const { FingerprintGenerator } = await import('fingerprint-generator');
+  const { fingerprint, headers } = new FingerprintGenerator().getFingerprint({
+    devices: ['desktop'],
+    operatingSystems: ['windows'],
+    browsers: ['chrome'],
+    screen: { minWidth: cfg.width, maxWidth: cfg.width, minHeight: cfg.height, maxHeight: cfg.height },
+    locales: ['en-US'],
+  });
+  egFingerprint = fingerprint;
+  egFingerprintHeaders = headers;
+}
 
 const screenshot = (...a) => resolve(cfg.dir.screenshots, 'epic-games', ...a);
 
 const URL_CLAIM = 'https://store.epicgames.com/en-US/free-games';
 const URL_LOGIN = 'https://www.epicgames.com/id/login?lang=en-US&noHostRedirect=true&redirectUrl=' + URL_CLAIM;
+const STORAGE_STATE_PATH = path.resolve(cfg.dir.browser, 'epic-games-state.json');
 
 console.log(datetime(), 'started checking epic-games');
 
@@ -19,24 +35,32 @@ const db = await jsonDb('epic-games.json', {});
 
 if (cfg.time) console.time('startup');
 
+const launchArgs = [
+  '--hide-crash-restore-bubble',
+  '--ignore-gpu-blocklist', // required for OpenGL: Disabled -> Enabled & WebGL: Software only -> Hardware accelerated
+  '--enable-unsafe-webgpu', // required for WebGPU: Disabled -> Hardware accelerated
+];
+
 // https://playwright.dev/docs/auth#multi-factor-authentication
-const context = await chromium.launchPersistentContext(cfg.dir.browser, {
-  // channel: 'chrome', // recommended, but `npx patchright install chrome` clashes with system Chrome - https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-nodejs#best-practice----use-chrome-without-fingerprint-injection
-  headless: false, // don't use cfg.headless headless here since SHOW=0 will lead to captcha
-  viewport: { width: cfg.width, height: cfg.height },
+const contextOptions = {
+  headless: cfg.headless, // try headless when SHOW=0; set SHOW=1 if you get captcha
+  viewport: egFingerprint ? { width: egFingerprint.screen.width, height: egFingerprint.screen.height } : { width: cfg.width, height: cfg.height },
   locale: 'en-US', // ignore OS locale to be sure to have english text for locators
   recordVideo: cfg.record ? { dir: 'data/record/', size: { width: cfg.width, height: cfg.height } } : undefined, // will record a .webm video for each page navigated; without size, video would be scaled down to fit 800x800
   recordHar: cfg.record ? { path: `data/record/eg-${filenamify(datetime())}.har` } : undefined, // will record a HAR file with network requests and responses; can be imported in Chrome devtools
   handleSIGINT: false, // have to handle ourselves and call context.close(), otherwise recordings from above won't be saved
-  // https://peter.sh/experiments/chromium-command-line-switches/
-  args: [
-    '--hide-crash-restore-bubble',
-    '--ignore-gpu-blocklist', // required for OpenGL: Disabled -> Enabled & WebGL: Software only -> Hardware accelerated
-    '--enable-unsafe-webgpu', // required for WebGPU: Disabled -> Hardware accelerated
-  ],
-  // The following makes the browser crash in docker with 'Chromium sandboxing failed!':
-  // chromiumSandbox: true, // https://github.com/Kaliiiiiiiiii-Vinyzu/patchright/issues/52
-});
+  args: launchArgs,
+};
+if (egFingerprint) {
+  contextOptions.userAgent = egFingerprint.navigator.userAgent;
+  contextOptions.extraHTTPHeaders = egFingerprintHeaders?.['accept-language'] ? { 'accept-language': egFingerprintHeaders['accept-language'] } : undefined;
+}
+const context = await chromium.launchPersistentContext(cfg.dir.browser, contextOptions);
+
+if (egFingerprint) {
+  const { FingerprintInjector } = await import('fingerprint-injector');
+  await new FingerprintInjector().attachFingerprintToPlaywright(context, { fingerprint: egFingerprint, headers: egFingerprintHeaders });
+}
 
 // console.log(context.browser().browserType()); // browser is null...
 if (cfg.debug) console.log(chromium.executablePath());
@@ -47,6 +71,16 @@ if (!cfg.debug) context.setDefaultTimeout(cfg.timeout);
 
 const page = context.pages().length ? context.pages()[0] : await context.newPage(); // should always exist
 // await page.setViewportSize({ width: cfg.width, height: cfg.height }); // TODO workaround for https://github.com/vogler/free-games-claimer/issues/277 until Playwright fixes it
+
+// Restore session: Playwright/patchright does not persist session cookies across context close (see playwright#36139)
+if (existsSync(STORAGE_STATE_PATH)) {
+  try {
+    const state = JSON.parse(readFileSync(STORAGE_STATE_PATH, 'utf8'));
+    if (state.cookies?.length) await context.addCookies(state.cookies);
+  } catch (e) {
+    if (cfg.debug) console.debug('Could not restore storage state:', e.message);
+  }
+}
 
 // some debug info about the page (screen dimensions, user agent, platform)
 if (cfg.debug) console.debug(await page.evaluate(() => [(({ width, height, availWidth, availHeight }) => ({ width, height, availWidth, availHeight }))(window.screen), navigator.userAgent, navigator.platform, navigator.vendor])); // deconstruct screen needed since `window.screen` prints {}, `window.screen.toString()` '[object Screen]', and can't use some pick function without defining it on `page`
@@ -123,6 +157,10 @@ try {
         const otp = cfg.eg_otpkey && authenticator.generate(cfg.eg_otpkey) || await prompt({ type: 'text', message: 'Enter two-factor sign in code', validate: n => n.toString().length == 6 || 'The code must be 6 digits!' }); // can't use type: 'number' since it strips away leading zeros and codes sometimes have them
         await page.locator('input[name="code-input-0"]').pressSequentially(otp.toString());
         await page.click('button[type="submit"]');
+      }).catch(_ => { });
+      page.waitForURL('**/id/login/review/account-details**').then(async () => {
+        console.log('Request for account details review - We need to click yes continue or else we get stuck here')
+        await page.click('button#yes')
       }).catch(_ => { });
     }
     await page.waitForURL(URL_CLAIM);
@@ -339,6 +377,12 @@ try {
   await db.write(); // write out json db
   if (notify_games.filter(g => g.status == 'claimed' || g.status == 'failed').length) { // don't notify if all have status 'existed', 'manual', 'requires base game', 'unavailable-in-region', 'skipped'
     notify(`epic-games (${user}):<br>${html_game_list(notify_games)}`);
+  }
+  // Persist session cookies so next run stays logged in (playwright#36139)
+  try {
+    await context.storageState({ path: STORAGE_STATE_PATH });
+  } catch (e) {
+    if (cfg.debug) console.debug('Could not save storage state:', e.message);
   }
 }
 if (cfg.debug) writeFileSync(path.resolve(cfg.dir.browser, 'cookies.json'), JSON.stringify(await context.cookies()));
