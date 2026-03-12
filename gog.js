@@ -103,7 +103,12 @@ try {
     await page.waitForSelector('#menuUsername');
     if (!cfg.debug) context.setDefaultTimeout(cfg.timeout);
   }
-  user = await page.locator('#menuUsername').first().textContent(); // innerText is uppercase due to styling!
+  const usernameLocator = page.locator('#menuUsername');
+  const usernameCount = await usernameLocator.count();
+  if (!usernameCount) {
+    throw new Error('Could not find #menuUsername after login. The GOG layout or selector may have changed.');
+  }
+  user = await usernameLocator.first().textContent(); // innerText is uppercase due to styling!
   console.log(`Signed in as ${user}`);
   db.data[user] ||= {};
 

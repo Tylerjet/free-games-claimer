@@ -240,7 +240,9 @@ try {
     let title;
     let bundle_includes;
     if (await page.locator('span:text-is("About Bundle")').count()) {
-      title = (await page.locator('span:has-text("Buy"):left-of([data-testid="purchase-cta-button"])').first().innerText()).replace('Buy ', '');
+      // waitForSelector + textContent avoid patchright "Can't query n-th element"
+      await page.waitForSelector('span:has-text("Buy"):left-of([data-testid="purchase-cta-button"])', { state: 'visible', timeout: 10000 });
+      title = ((await page.textContent('span:has-text("Buy"):left-of([data-testid="purchase-cta-button"])')) ?? '').replace('Buy ', '').trim();
       // h1 first didn't exist for bundles but now it does... However h1 would e.g. be 'Fallout® Classic Collection' instead of 'Fallout Classic Collection'
       try {
         bundle_includes = await Promise.all((await page.locator('.product-card-top-row h5').all()).map(b => b.innerText()));
@@ -248,7 +250,9 @@ try {
         console.error('Failed to get "Bundle Includes":', e);
       }
     } else {
-      title = await page.locator('h1').first().innerText();
+      // waitForSelector + textContent avoid patchright "Can't query n-th element" (locator.first().innerText can throw)
+      await page.waitForSelector('h1', { state: 'visible', timeout: 10000 });
+      title = (await page.textContent('h1'))?.trim() ?? 'Unknown';
     }
     const game_id = page.url().split('/').pop();
     const existedInDb = db.data[user][game_id];
